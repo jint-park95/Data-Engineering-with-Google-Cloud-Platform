@@ -19,7 +19,7 @@ def create_bigquery_dataset(dataset_name):
     except NotFound:
         dataset = bigquery.Dataset(dataset_id)
         dataset.location = location
-        dataset = client.create_dataset(dataset, timeout=30)  # Make an API request..
+        dataset = client.create_dataset(dataset, timeout=30)  # Make an API request.
         print("Created dataset {}.{}".format(client.project, dataset.dataset_id))
 
 
