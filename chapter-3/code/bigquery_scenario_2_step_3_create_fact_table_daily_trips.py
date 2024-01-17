@@ -20,9 +20,9 @@ def create_fact_table(PROJECT_ID, TARGET_TABLE_ID):
           SUM(duration_sec) as sum_duration_sec,
           AVG(duration_sec) as avg_duration_sec
           FROM `{PROJECT_ID}.raw_bikesharing.trips` trips
-          JOIN `{load_date}.raw_bikesharing.stations` stations
+          JOIN `{PROJECT_ID}.raw_bikesharing.stations` stations
           ON trips.start_station_id = stations.station_id
-          WhERE DATE(start_date) = DATE('{}')
+          WhERE DATE(start_date) = DATE('{load_date}')
           GROUP BY trip_date, start_station_id
           ;""".format(PROJECT_ID=PROJECT_ID, load_date=load_date)
 

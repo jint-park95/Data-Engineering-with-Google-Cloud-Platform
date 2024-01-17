@@ -3,7 +3,7 @@ from google.cloud import bigquery
 # TODO : Change to your project id
 PROJECT_ID = "packt-data-eng-on-gcp"
 TABLE_ID = "{}.raw_bikesharing.stations".format(PROJECT_ID)
-GCS_URI = "gs://{}-data-bucket/mysql_export/stations/20180102/stations.csv".format(project_id)
+GCS_URI = "gs://{}-data-bucket/mysql_export/stations/20180102/stations.csv".format(PROJECT_ID)
 
 def load_gcs_to_bigquery_snapshot_data(GCS_URI, TABLE_ID, table_schema):
     client = bigquery.Client()
