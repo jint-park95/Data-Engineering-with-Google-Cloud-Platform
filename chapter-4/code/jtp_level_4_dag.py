@@ -1,5 +1,5 @@
-import os
 import json
+import os
 
 from airflow import DAG
 from airflow.contrib.operators.gcp_sql_operator import CloudSqlInstanceExportOperator
@@ -12,7 +12,7 @@ from airflow.models import Variable
 from datetime import datetime
 
 args = {
-    'owner' : 'jtp'
+    'owner': 'packt-developer',
 }
 
 def read_json_schema(gcs_file_path):
@@ -34,16 +34,18 @@ bq_raw_dataset         = settings['bq_raw_dataset']
 bq_dwh_dataset         = settings['bq_dwh_dataset']
 
 # Macros
-execution_date         = '{{ ds }}'
+extracted_date         = '{{ ds }}'
+extracted_date_nodash  = '{{ ds_nodash }}'
 
 # Stations
-station_source_object  = "chapter-4/stations/stations.csv"
+station_source_object  = f"chapter-4/stations/stations.csv"
 sql_query              = "SELECT * FROM apps_db.stations"
+
 
 export_body = {
     "exportContext": {
         "fileType": "csv",
-        "uri": f"gs://{gcs_source_data_bucket}/{station_source_object}",
+        "uri": f"""gs://{gcs_source_data_bucket}/{station_source_object}""",
         "csvExportOptions":{
             "selectQuery": sql_query
         }
@@ -56,7 +58,7 @@ bq_stations_table_schema = read_json_schema("/home/airflow/gcs/data/schema/stati
 
 # Regions
 gcs_regions_source_object = "from-git/chapter-3/dataset/regions/regions.csv"
-gcs_regions_target_object = "chapter-4/regions/regions.csv"
+gcs_regions_target_object = f"chapter-4/regions/{extracted_date_nodash}/regions.csv"
 bq_regions_table_name = "regions"
 bq_regions_table_id = f"{gcp_project_id}.{bq_raw_dataset}.{bq_regions_table_name}"
 bq_regions_table_schema = read_json_schema("/home/airflow/gcs/data/schema/regions_schema.json")
@@ -64,9 +66,9 @@ bq_regions_table_schema = read_json_schema("/home/airflow/gcs/data/schema/region
 # Trips
 bq_temporary_extract_dataset_name = "temporary_staging"
 bq_temporary_extract_table_name = "trips"
-bq_temporary_table_id = f"{gcp_project_id}.{bq_temporary_extract_dataset_name}.{bq_temporary_extract_table_name}"
+bq_temporary_table_id = f"{gcp_project_id}.{bq_temporary_extract_dataset_name}.{bq_temporary_extract_table_name}_{extracted_date_nodash}"
 
-gcs_trips_source_object = "chapter-4/trips/trips.csv"
+gcs_trips_source_object = f"chapter-4/trips/{extracted_date_nodash}/*.csv"
 gcs_trips_source_uri = f"gs://{gcs_source_data_bucket}/{gcs_trips_source_object}"
 
 bq_trips_table_name = "trips"
@@ -75,15 +77,15 @@ bq_trips_table_schema = read_json_schema("/home/airflow/gcs/data/schema/trips_sc
 
 # DWH
 bq_fact_trips_daily_table_name = "facts_trips_daily"
-bq_fact_trips_daily_table_id = f"{gcp_project_id}.{bq_dwh_dataset}.{bq_fact_trips_daily_table_name}"
+bq_fact_trips_daily_table_id = f"{gcp_project_id}.{bq_dwh_dataset}.{bq_fact_trips_daily_table_name}${extracted_date_nodash}"
 
 bq_dim_stations_table_name = "dim_stations"
 bq_dim_stations_table_id = f"{gcp_project_id}.{bq_dwh_dataset}.{bq_dim_stations_table_name}"
 
 with DAG(
-    dag_id = 'level_3_dag_parameters',
-    default_args = args,
-    schedule_interval = '0 5 * * *',
+    dag_id='level_4_dag_task_idempotency',
+    default_args=args,
+    schedule_interval='0 5 * * *',
     start_date=datetime(2018, 1, 1),
     end_date=datetime(2018, 1, 5)
 ) as dag:
@@ -107,11 +109,11 @@ with DAG(
 
     ### Load Region Table ###
     gcs_to_gcs_region = GoogleCloudStorageToGoogleCloudStorageOperator(
-        task_id = 'gcs_to_gcs_region',
-        source_bucket = gcs_source_data_bucket,
-        source_object = [gcs_regions_source_object],
-        destination_bucket = gcs_source_data_bucket,
-        destination_object = gcs_regions_target_object
+        task_id             = 'gcs_to_gcs_region',
+        source_bucket       = gcs_source_data_bucket,
+        source_object       = gcs_regions_source_object,
+        destination_bucket  = gcs_source_data_bucket,
+        destination_object  = gcs_regions_target_object
     )
 
     gcs_to_bq_region = GoogleCloudStorageToBigQueryOperator(
@@ -128,7 +130,7 @@ with DAG(
     task_id='bq_to_bq_temporary_trips',
     sql=f"""
         SELECT * FROM `bigquery-public-data.san_francisco_bikeshare.bikeshare_trips`
-        WHERE DATE(start_date) = DATE('{execution_date}')
+        WHERE DATE(start_date) = DATE('{extracted_date}')
         """,
     use_legacy_sql=False,
     destination_dataset_table=bq_temporary_table_id,
@@ -146,9 +148,10 @@ with DAG(
     task_id                             = "gcs_to_bq_trips",
     bucket                              = gcs_source_data_bucket,
     source_objects                      = [gcs_trips_source_object],
-    destination_project_dataset_table   = bq_trips_table_id,
+    destination_project_dataset_table   = bq_trips_table_id + f"${extracted_date_nodash}",
     schema_fields                       = bq_trips_table_schema,
-    write_disposition                   ='WRITE_APPEND'
+    time_partitioning                   = {'time_partitioning_type':'DAY','field': 'start_date'},
+    write_disposition                   ='WRITE_TRUNCATE'
     )
 
     ### Load DWH Tables ###
@@ -160,10 +163,11 @@ with DAG(
                                       SUM(duration_sec) as sum_duration_sec,
                                       AVG(duration_sec) as avg_duration_sec
                                       FROM `{bq_trips_table_id}`
-                                      WHERE DATE(start_date) = DATE('{execution_date}')
+                                      WHERE DATE(start_date) = DATE('{extracted_date}')
                                       GROUP BY trip_date, start_station_id""",
         destination_dataset_table   = bq_fact_trips_daily_table_id,
-        write_disposition           = 'WRITE_APPEND',
+        write_disposition           = 'WRITE_TRUNCATE',
+        time_partitioning           = {'time_partitioning_type':'DAY','field': 'trip_date'},
         create_disposition          = 'CREATE_IF_NEEDED',
         use_legacy_sql              = False,
         priority                    = 'BATCH'
@@ -190,7 +194,8 @@ with DAG(
     bq_row_count_check_dwh_fact_trips_daily = BigQueryCheckOperator(
     task_id='bq_row_count_check_dwh_fact_trips_daily',
     sql=f"""
-    select count(*) from `{bq_fact_trips_daily_table_id}`
+    select count(*) from `{gcp_project_id}.{bq_dwh_dataset}.{bq_fact_trips_daily_table_name}`
+    WHERE trip_date = DATE('{extracted_date}')
     """,
     use_legacy_sql=False)
 
